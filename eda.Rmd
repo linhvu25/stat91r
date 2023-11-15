@@ -1,0 +1,6 @@
+
+```{r}
+library(haven)
+read_dta("sec matched teachers & students.dta")
+```
+
