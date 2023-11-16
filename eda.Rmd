@@ -1,6 +1,201 @@
+---
+title: "Stat 91r: EDA"
+author: "Linh Vu"
+output: html_document
+---
 
-```{r}
-library(haven)
-read_dta("sec matched teachers & students.dta")
+```{r load data}
+# load Packages
+require(pacman)
+p_load(haven, dplyr, corrplot, vioplot, effects, sjPlot, emmeans, tidyverse, 
+       ggthemes, performance, boot, visreg, vtree,
+       glmmTMB, rstanarm, lme4, ggpubr,
+       install = TRUE)
+# load data
+data <- read_dta("sec matched teachers & students.dta")
+
+# overview
+# str(data)
+table(data$source)
+table(data$version)
+table(data$year)
+
+# subset data
+perception <- data[data$source == "master_secondary_compact" & data$version == 4,]
+
+# create data dictionary
+dictionary <- data.frame("name" = names(data),
+        "label" = sapply(data, function(x) attr(x, "label"))  %>% as.character(),
+       "values" = sapply(data, function(x) attr(x, "labels")) %>% as.character())
 ```
+
+For this project, I will focus on `master_secondary_compact` data from version 4 (19256 observations). 
+
+Some broad characteristics of the subsetted survey dataset: All surveys were conducted on paper. Most observations are from 2007 (13,000 observations), some are from 2008 (6000 observations), and a few from 2009 (250 observations). The data includes 51 schools from 10 states: AZ, CA, IL, MA, MO, NJ, NM, NY, OH, OR. 
+
+The data is at the student level (can be aggregated at the class, school, and state levels). The `a` variables are about how the students perceive themselves in class. The `b` variables are about how the students perceive the teachers in class. The `c` variables are about the demographic and social life of students; some are about how race influences the experience of the students. The `t` variables are from the perspectives of teachers. 
+
+```{r overview}
+table(perception$type)
+table(perception$year)
+table(perception$state)
+length(unique(perception$schoolid))
+
+# params
+id_vars <- c("year", "state", "schoolid", "classid", "studentid")
+
+# student data
+student <- perception[,1:310]
+student_subset <- cbind(student[id_vars], student[ ,grepl( "m_" , names(student))])
+
+colSums(is.na(student_subset))
+```
+
+
+## Question 1: Impact of "Acting White" on GPA
+
+
+Existing research finds that minority students might intentionally perform worse in class if excelling is equated to "acting white" and if slacking academically helps them fit in with their peer group better. I want to verify this claim using this dataset. 
+
+The relevant predictor variables are:
+
+* `m_c20_k`: My friends think it’s important to work hard to get high grades
+* `m_c20_s`: At this school, people like me get accused of acting white
+* `m_a17`: I sometimes hold back from doing my best in this class, because of what others may think
+* `m_a29`: Sometimes I pretend I'm not trying hard in this class, when I really am.
+* `m_a40`: I feel out of place in this class, like I don't really fit in.
+* `m_b23`: In this class, some students try to keep others from working hard
+* `m_b24`: Students in this class tease people who get wrong answers
+* `m_b39`: In this class, students get teased if they study hard to get good grades
+* Note that 1 means Never, 2 means Usually not, 3 means Sometimes, 4 means Usually, 5 means Always
+
+The relevant outcome variables are:
+
+* `m_b51`: What is the final grade you think you will get in this class
+* `m_b52`: About how much time in a week do you usually spend studying or doing homework for this class
+* `m_b56`: What was your GRADE POINT AVERAGE last term for all of your classes
+
+```{r q1 EDA, warning=F, message=F}
+# subset data
+vars_df1 <- c(id_vars, "m_c20_k", "m_c20_s","m_a17","m_a29","m_a40",
+              "m_b23","m_b24","m_b39","m_b51","m_b52","m_b56")
+student_df1 <- subset(student_subset, select=vars_df1)
+
+student_df1$m_c20_k <- as.factor(student_df1$m_c20_k)
+student_df1$m_c20_s <- as.factor(student_df1$m_c20_s)
+student_df1$m_a17   <- as.factor(student_df1$m_a17)
+student_df1$m_a29   <- as.factor(student_df1$m_a29)
+student_df1$m_a40   <- as.factor(student_df1$m_a40)
+student_df1$m_b23   <- as.factor(student_df1$m_b23)
+student_df1$m_b24   <- as.factor(student_df1$m_b24)
+student_df1$m_b39   <- as.factor(student_df1$m_b39)
+
+# legends
+legend_q1 = c("My friends think it’s important to work hard to get high grades", 
+              "At this school, people like me get accused of acting white",
+              "I sometimes hold back from doing my best in this class, because of what others may think",
+              "Sometimes I pretend I'm not trying hard in this class, when I really am.",
+              "I feel out of place in this class, like I don't really fit in.",
+              "In this class, some students try to keep others from working hard",
+              "Students in this class tease people who get wrong answers",
+              "In this class, students get teased if they study hard to get good grades")
+
+#### scatterplot of m_b56 ####
+  # set vars
+  p_vars_hist_m_b56 <- c("m_c20_k", "m_c20_s","m_a17","m_a29","m_a40","m_b23","m_b24","m_b39")
+  
+  # create list
+  gg_list_hist_m_b56 <- lapply(1:length(p_vars_hist_m_b56), function(i){
+    
+    # get params & subset data
+    var    = p_vars_hist_m_b56[i]
+    legend = legend_q1[i]
+    df     = subset(student_df1, subset=(!is.na(get(var))))
+      
+    # plot
+    ggplot(aes(m_b56, fill = forcats::fct_rev(get(var))), data=df) + 
+      geom_histogram(position = "fill") +
+      scale_fill_brewer(type = "seq", palette = 4,
+                      name = "see caption",
+                      labels = c("Always", "Usually", "Sometimes", 
+                                 "Usually not", "Almost never")) +
+      labs(title = "GPA (A to F)",
+           caption = paste0(var, ": ", legend)) +
+      xlab("GPA")
+  })
+  
+  # return list
+  gg_list_hist_m_b56
+  
+#### scatterplot of m_b52 ####
+  # set vars
+  p_vars_hist_m_b52 <- c("m_c20_k", "m_c20_s","m_a17","m_a29","m_a40","m_b23","m_b24","m_b39")
+  
+  # create list
+  gg_list_hist_m_b52 <- lapply(1:length(p_vars_hist_m_b52), function(i){
+    
+    # get params & subset data
+    var    = p_vars_hist_m_b52[i]
+    legend = legend_q1[i]
+    df     = subset(student_df1, subset=(!is.na(get(var))))
+      
+    # plot
+    ggplot(aes(m_b52, fill = forcats::fct_rev(get(var))), data=df) + 
+      geom_histogram(position = "fill") +
+      scale_fill_brewer(type = "seq", palette = 4,
+                      name = "see caption",
+                      labels = c("Always", "Usually", "Sometimes", 
+                                 "Usually not", "Almost never")) +
+      labs(title = "Hours spent on this class per week (low to high)",
+           caption = paste0(var, ": ", legend)) +
+      xlab("Hours")
+  })
+  
+  # return list
+  gg_list_hist_m_b52 
+```
+
+We see that 
+
+```{r q1 models}
+summary(lm(m_b56~., student_df1))
+```
+
+
+## Question 2: Impact of Intrinsic vs External Motivations 
+
+The relevant predictor variables are:
+
+* `m_a11`: When I work hard for this class, an important reason is because I enjoy it.
+* `m_a12`: One of my goals is to show others that class work is easy for me.
+* `m_a14`: In this class, I worry that I might not do as well as other students.
+* `m_a16`: It's important to me that others do not think I'm dumb in this class.
+* `m_a18`: When I work hard, an important reason is that the teacher encourages me.
+* `m_a20`: One of my goals in this class has been to show others that I am good at class work
+* `m_a30`: One of my goals in this class is to keep others from thinking I'm not smart.
+* `m_a36`: Sometimes in this class, I worry about not looking smart.
+* `m_a37`: I care about pleasing my teacher in this class.
+* `m_b24`: In this class, it's important not to do worse than other students
+* `m_b37`: In this class, getting good grades is the main goal
+
+The relevant outcome variables are:
+
+* `m_b51`: What is the final grade you think you will get in this class
+* `m_b52`: About how much time in a week do you usually spend studying or doing homework for this class
+* `m_b56`: What was your GRADE POINT AVERAGE last term for all of your classes
+
+```{r q2}
+
+```
+
+
+## Question 3: Impact of Teachers
+
+The relevant variables are:
+
+* 
+
+
+## Question 4: 
+
 
